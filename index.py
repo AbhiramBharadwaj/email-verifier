@@ -42,17 +42,19 @@ def has_mx_record(domain: str) -> bool:
 @app.post("/verify")
 async def verify_email(req: EmailRequest):
     email = req.email
+
+    # Double-check
+    if '@' not in email:
+        return {"email": email, "status": "invalid", "reason": "Bad Syntax"}
+
     local_part, domain = email.split('@', 1)
 
-    # Block role-based emails
     if is_blocked_prefix(local_part):
         return {"email": email, "status": "invalid", "reason": "Role-based email not allowed"}
 
-    # Block disposable domains
     if is_disposable_domain(domain):
         return {"email": email, "status": "invalid", "reason": "Disposable email domain"}
 
-    # Check MX Records
     if not has_mx_record(domain):
         return {"email": email, "status": "invalid", "reason": "No MX Record"}
 
