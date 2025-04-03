@@ -1,62 +1,42 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, EmailStr
-import dns.resolver
+from fastapi import FastAPI, Request
 import re
+import dns.resolver
 
 app = FastAPI()
 
-class EmailRequest(BaseModel):
-    email: EmailStr
+# Blocked local parts (role-based emails)
+blocked_prefixes = {"info", "admin", "support", "sales", "contact", "noreply", "no-reply", "help", "service", "billing"}
 
-# List of blocked prefixes (role-based accounts)
-blocked_prefixes = {
-    "info", "support", "admin", "sales", "contact", "noreply",
-    "no-reply", "help", "service", "billing", "office", "hr"
-}
+def is_valid_syntax(email):
+    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+    return re.match(pattern, email)
 
-# Sample disposable domains (expand this list for production)
-disposable_domains = {
-    "tempmail.com", "10minutemail.com", "mailinator.com", "guerrillamail.com"
-}
+def is_blocked_email(email):
+    local_part = email.split('@')[0].lower()
+    return local_part in blocked_prefixes
 
-def is_blocked_prefix(local_part: str) -> bool:
-    # Exact match
-    if local_part.lower() in blocked_prefixes:
-        return True
-    # Partial match like info123, support_team etc.
-    for prefix in blocked_prefixes:
-        if local_part.lower().startswith(prefix):
-            return True
-    return False
-
-def is_disposable_domain(domain: str) -> bool:
-    return domain.lower() in disposable_domains
-
-def has_mx_record(domain: str) -> bool:
+def has_mx_record(domain):
     try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=5.0)
-        return len(answers) > 0
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout, dns.resolver.NoNameservers):
+        mx_records = dns.resolver.resolve(domain, 'MX')
+        return len(mx_records) > 0
+    except:
         return False
 
 @app.post("/verify")
-async def verify_email(req: EmailRequest):
-    email = req.email
+async def verify(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    if not email:
+        return {"status": "error", "message": "No email provided"}
 
-    # Double-check
-    if '@' not in email:
+    if not is_valid_syntax(email):
         return {"email": email, "status": "invalid", "reason": "Bad Syntax"}
 
-    local_part, domain = email.split('@', 1)
-
-    if is_blocked_prefix(local_part):
+    if is_blocked_email(email):
         return {"email": email, "status": "invalid", "reason": "Role-based email not allowed"}
 
-    if is_disposable_domain(domain):
-        return {"email": email, "status": "invalid", "reason": "Disposable email domain"}
-
+    domain = email.split('@')[1]
     if not has_mx_record(domain):
         return {"email": email, "status": "invalid", "reason": "No MX Record"}
 
     return {"email": email, "status": "valid"}
-
