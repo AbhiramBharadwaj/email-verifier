@@ -12,6 +12,9 @@ blocked_prefixes = {
     "abuse", "postmaster", "hostmaster", "root", "system", "mail", "mailer"
 }
 
+# Well-known email providers that block SMTP verification
+known_providers = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"}
+
 def is_valid_syntax(email: str) -> bool:
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
@@ -30,6 +33,11 @@ async def has_mx_record(domain: str) -> bool:
 async def smtp_verify_email(email: str) -> str:
     domain = email.split('@')[1]
     try:
+        # Skip SMTP verification for known providers
+        if domain in known_providers:
+            print(f"[🔍 SKIPPING SMTP] {domain} is a known provider.")
+            return "unverified"  # We cannot verify, but we do not consider it invalid
+
         # Fetch MX records for the domain
         mx_records = await asyncio.to_thread(dns.resolver.resolve, domain, 'MX')
         mx_server = str(mx_records[0].exchange).rstrip('.')
@@ -69,8 +77,11 @@ async def verify(request: Request):
     if not await has_mx_record(domain):
         return {"email": email, "status": "invalid", "reason": "No MX Record"}
 
+    # Use SMTP only for custom domains
     smtp_status = await smtp_verify_email(email)
     if smtp_status == "valid":
         return {"email": email, "status": "valid"}
+    elif smtp_status == "unverified":
+        return {"email": email, "status": "unverified", "reason": "SMTP verification failed or skipped for known provider"}
     else:
-        return {"email": email, "status": "unverified", "reason": "SMTP verification failed"}
+        return {"email": email, "status": "invalid", "reason": "SMTP verification failed"}
