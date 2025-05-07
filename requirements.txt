@@ -1,5 +1,4 @@
-python = "^3.9"
-fastapi = "^0.95.2"
-uvicorn = "^0.22.0"
-aiosmtplib = "^1.1.7"
+fastapi==0.95.2
+uvicorn==0.22.0
+aiosmtplib==1.1.7
 dnspython==2.3.0
