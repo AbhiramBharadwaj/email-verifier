@@ -1,3 +1,5 @@
-fastapi
-uvicorn
-dnspython
+
+fastapi==0.95.2
+uvicorn==0.22.0
+aiosmtplib==1.1.7
+dns-python==2.3.0
