@@ -35,7 +35,7 @@ async def smtp_verify_email(email: str) -> bool:
         # Fetch MX records for the domain
         mx_records = dns.resolver.resolve(domain, 'MX')
         mx_server = str(mx_records[0].exchange).rstrip('.')
-        print(f"[✅ SMTP CHECK] Using MX Server: {mx_server}")
+        print(f"[✅ SMTP CHECK] Using MX Server : {mx_server}")
 
         # Connect to the MX server using SMTP
         smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=25, timeout=10)
