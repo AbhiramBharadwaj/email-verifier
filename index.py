@@ -35,36 +35,22 @@ async def smtp_verify_email(email: str) -> str:
         mx_server = str(mx_records[0].exchange).rstrip('.')
         print(f"[✅ SMTP CHECK] Using MX Server: {mx_server}")
 
-        # Try multiple SMTP ports (25, 587, 465)
-        ports = [25, 587, 465]
-        for port in ports:
-            try:
-                print(f"[🔍 TRYING SMTP] {mx_server}:{port}")
-                smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=port, timeout=5)
-                await smtp_client.connect()
-                await smtp_client.ehlo()
+        # Try only one SMTP port (25) with a short timeout
+        smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=25, timeout=3)
+        await smtp_client.connect()
+        await smtp_client.ehlo()
 
-                response_rcpt = await smtp_client.mail("")
-                response_rcpt = await smtp_client.rcpt(email)
-                await smtp_client.quit()
+        response_rcpt = await smtp_client.mail("")
+        response_rcpt = await smtp_client.rcpt(email)
+        await smtp_client.quit()
 
-                if response_rcpt[0] == 250:
-                    return "valid"
-            except aiosmtplib.SMTPException as e:
-                print(f"[❌ SMTP ERROR on {port}] {e}")
-                continue  # Try the next port
+        if response_rcpt[0] == 250:
+            return "valid"
+        else:
+            return "unverified"
 
-        return "unverified"  # Unable to verify, but not necessarily invalid
-
-    except dns.resolver.NoAnswer:
-        print("[❌ SMTP CHECK] No MX records found for the domain.")
-        return "invalid"
-    except dns.resolver.NXDOMAIN:
-        print("[❌ SMTP CHECK] Domain does not exist.")
-        return "invalid"
-    except Exception as e:
-        print(f"[❌ UNKNOWN ERROR] {e}")
-        return "unverified"  # Unable to verify
+    except (aiosmtplib.SMTPException, Exception):
+        return "unverified"
 
 @app.post("/verify")
 async def verify(request: Request):
@@ -86,7 +72,5 @@ async def verify(request: Request):
     smtp_status = await smtp_verify_email(email)
     if smtp_status == "valid":
         return {"email": email, "status": "valid"}
-    elif smtp_status == "unverified":
-        return {"email": email, "status": "unverified", "reason": "SMTP verification failed or blocked"}
     else:
-        return {"email": email, "status": "invalid", "reason": "SMTP verification failed"}
+        return {"email": email, "status": "unverified", "reason": "SMTP verification failed"}
