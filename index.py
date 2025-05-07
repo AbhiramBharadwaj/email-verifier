@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
 import re
 import dns.resolver
-import asyncio
 import aiosmtplib
 
 app = FastAPI()
@@ -9,7 +8,8 @@ app = FastAPI()
 # Enhanced blocked local parts (role-based emails)
 blocked_prefixes = {
     "info", "admin", "support", "sales", "contact", "noreply", "no-reply",
-    "help", "service", "billing", "webmaster", "security", "marketing", "abuse"
+    "help", "service", "billing", "webmaster", "security", "marketing",
+    "abuse", "postmaster", "hostmaster", "root", "system", "mail", "mailer"
 }
 
 def is_valid_syntax(email: str) -> bool:
@@ -23,25 +23,42 @@ def is_blocked_email(email: str) -> bool:
 
 async def has_mx_record(domain: str) -> bool:
     try:
-        mx_records = await asyncio.to_thread(dns.resolver.resolve, domain, 'MX')
+        mx_records = dns.resolver.resolve(domain, 'MX')
         return len(mx_records) > 0
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
         return False
 
-async def smtp_check(email: str) -> bool:
+async def smtp_verify_email(email: str) -> bool:
     domain = email.split('@')[1]
-    
+
     try:
-        # Fetch MX records of the domain
+        # Fetch MX records for the domain
         mx_records = dns.resolver.resolve(domain, 'MX')
         mx_server = str(mx_records[0].exchange).rstrip('.')
-        print(f"[SMTP CHECK] Using MX Server: {mx_server}")
+        print(f"[✅ SMTP CHECK] Using MX Server: {mx_server}")
 
-        # Try connecting to the MX server (port 25 for standard SMTP)
-        smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=25, timeout=5)
+        # Connect to the MX server using SMTP
+        smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=25, timeout=10)
         await smtp_client.connect()
+        await smtp_client.ehlo()
+
+        # SMTP VRFY (Verify) and RCPT TO (Recipient) commands
+        response_vrfy = await smtp_client.vrfy(email)
+        print(f"[🔍 VRFY Response]: {response_vrfy}")
+
+        # If VRFY is not supported, use RCPT TO
+        response_rcpt = await smtp_client.mail("")
+        response_rcpt = await smtp_client.rcpt(email)
+        print(f"[🔍 RCPT Response]: {response_rcpt}")
+
         await smtp_client.quit()
-        return True
+
+        # If the server accepts the email, it is valid
+        if response_rcpt[0] == 250:
+            return True
+        else:
+            print(f"[❌ SMTP CHECK] Email not accepted: {response_rcpt}")
+            return False
 
     except dns.resolver.NoAnswer:
         print("[❌ SMTP CHECK] No MX records found for the domain.")
@@ -50,7 +67,7 @@ async def smtp_check(email: str) -> bool:
         print("[❌ SMTP CHECK] Domain does not exist.")
         return False
     except aiosmtplib.SMTPException as e:
-        print(f"[❌ SMTP CHECK ERROR] SMTP connection failed: {e}")
+        print(f"[❌ SMTP ERROR] {e}")
         return False
     except Exception as e:
         print(f"[❌ UNKNOWN ERROR] {e}")
@@ -63,18 +80,23 @@ async def verify(request: Request):
     if not email:
         return {"status": "error", "message": "No email provided"}
 
+    # Step 1: Syntax Validation
     if not is_valid_syntax(email):
         return {"email": email, "status": "invalid", "reason": "Bad Syntax"}
 
+    # Step 2: Blocked Role-Based Email Check
     if is_blocked_email(email):
         return {"email": email, "status": "invalid", "reason": "Role-based email not allowed"}
 
+    # Step 3: MX Record Validation
     domain = email.split('@')[1]
     if not await has_mx_record(domain):
         return {"email": email, "status": "invalid", "reason": "No MX Record"}
 
-    # Optional: Uncomment to enable SMTP check (can be slow)
-    if not await smtp_check(email):
+    # Step 4: Advanced SMTP Verification
+    is_smtp_valid = await smtp_verify_email(email)
+    if not is_smtp_valid:
         return {"email": email, "status": "invalid", "reason": "SMTP verification failed"}
 
+    # If all checks pass
     return {"email": email, "status": "valid"}
