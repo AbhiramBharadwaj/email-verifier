@@ -27,23 +27,44 @@ async def has_mx_record(domain: str) -> bool:
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
         return False
 
-async def smtp_verify_email(email: str) -> bool:
+async def smtp_verify_email(email: str) -> str:
     domain = email.split('@')[1]
     try:
+        # Fetch MX records for the domain
         mx_records = await asyncio.to_thread(dns.resolver.resolve, domain, 'MX')
         mx_server = str(mx_records[0].exchange).rstrip('.')
+        print(f"[✅ SMTP CHECK] Using MX Server: {mx_server}")
 
-        smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=25, timeout=5)  # Reduced timeout
-        await smtp_client.connect()
-        await smtp_client.ehlo()
+        # Try multiple SMTP ports (25, 587, 465)
+        ports = [25, 587, 465]
+        for port in ports:
+            try:
+                print(f"[🔍 TRYING SMTP] {mx_server}:{port}")
+                smtp_client = aiosmtplib.SMTP(hostname=mx_server, port=port, timeout=5)
+                await smtp_client.connect()
+                await smtp_client.ehlo()
 
-        response_rcpt = await smtp_client.mail("")
-        response_rcpt = await smtp_client.rcpt(email)
-        await smtp_client.quit()
+                response_rcpt = await smtp_client.mail("")
+                response_rcpt = await smtp_client.rcpt(email)
+                await smtp_client.quit()
 
-        return response_rcpt[0] == 250
-    except (aiosmtplib.SMTPException, Exception):
-        return False
+                if response_rcpt[0] == 250:
+                    return "valid"
+            except aiosmtplib.SMTPException as e:
+                print(f"[❌ SMTP ERROR on {port}] {e}")
+                continue  # Try the next port
+
+        return "unverified"  # Unable to verify, but not necessarily invalid
+
+    except dns.resolver.NoAnswer:
+        print("[❌ SMTP CHECK] No MX records found for the domain.")
+        return "invalid"
+    except dns.resolver.NXDOMAIN:
+        print("[❌ SMTP CHECK] Domain does not exist.")
+        return "invalid"
+    except Exception as e:
+        print(f"[❌ UNKNOWN ERROR] {e}")
+        return "unverified"  # Unable to verify
 
 @app.post("/verify")
 async def verify(request: Request):
@@ -62,8 +83,10 @@ async def verify(request: Request):
     if not await has_mx_record(domain):
         return {"email": email, "status": "invalid", "reason": "No MX Record"}
 
-    is_smtp_valid = await smtp_verify_email(email)
-    if not is_smtp_valid:
+    smtp_status = await smtp_verify_email(email)
+    if smtp_status == "valid":
+        return {"email": email, "status": "valid"}
+    elif smtp_status == "unverified":
+        return {"email": email, "status": "unverified", "reason": "SMTP verification failed or blocked"}
+    else:
         return {"email": email, "status": "invalid", "reason": "SMTP verification failed"}
-
-    return {"email": email, "status": "valid"}
